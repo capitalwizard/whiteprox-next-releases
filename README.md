@@ -17,7 +17,32 @@ A letöltő felismeri az Apple Silicon / Intel gépet, és a Letöltések mappá
 **Windows:** másold ezt a PowerShellbe:
 
 ```powershell
-$r = Invoke-RestMethod 'https://github.com/capitalwizard/whiteprox-next-releases/releases/latest/download/release.json'; $a = $r.downloads.win.x64; if ($a.name -notmatch '^WhiteProX-Next-[0-9.]+-win-x64\.exe$' -or $a.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Invalid release' }; $p = Join-Path ([Environment]::GetFolderPath('UserProfile')) ('Downloads\' + $a.name); Invoke-WebRequest ('https://github.com/capitalwizard/whiteprox-next-releases/releases/latest/download/' + $a.name) -OutFile $p; if ((Get-FileHash $p -Algorithm SHA256).Hash.ToLowerInvariant() -ne $a.sha256) { Remove-Item $p; throw 'Checksum mismatch' }; Write-Host "Verified download: $p"
+# Download only: does not change execution policy or launch the installer.
+$Destination = Join-Path $env:USERPROFILE 'Downloads'
+$ErrorActionPreference = 'Stop'
+$Base = 'https://github.com/capitalwizard/whiteprox-next-releases/releases/latest/download'
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'This downloader is for Windows.' }
+if (-not [Environment]::Is64BitOperatingSystem) { throw 'WhiteProX Next requires 64-bit Windows.' }
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$Manifest = Invoke-RestMethod -Uri "$Base/release.json"
+$Asset = $Manifest.downloads.win.x64
+if ($Asset.name -notmatch '^WhiteProX-Next-[A-Za-z0-9.-]+-win-x64\.exe$' -or $Asset.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Invalid release manifest.' }
+New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+$Temporary = Join-Path ([IO.Path]::GetTempPath()) ('whiteprox-download-' + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $Temporary | Out-Null
+try {
+  $Download = Join-Path $Temporary $Asset.name
+  Write-Host "Downloading WhiteProX Next $($Manifest.version) (Windows x64)…"
+  Invoke-WebRequest -UseBasicParsing -Uri "$Base/$($Asset.name)" -OutFile $Download
+  if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Download).Hash.ToLowerInvariant() -ne $Asset.sha256) { throw 'Checksum mismatch: download discarded.' }
+  $Target = Join-Path $Destination $Asset.name
+  if (Test-Path -LiteralPath $Target) {
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Target).Hash.ToLowerInvariant() -ne $Asset.sha256) { throw 'A different file already exists; nothing was overwritten.' }
+  } else { Move-Item -LiteralPath $Download -Destination $Target }
+  Write-Host "Verified download: $Target"
+  Write-Host 'Open this installer to install or update WhiteProX Next.'
+  if ($Manifest.distributionMode -eq 'preview') { Write-Host 'Preview build: no Windows publisher certificate. Windows may display an unknown-publisher warning.' }
+} finally { Remove-Item -LiteralPath $Temporary -Recurse -Force }
 ```
 
 A parancsok letöltik és SHA-256 alapján ellenőrzik a telepítőt; nem indítanak telepítést. A Windows-letöltő külön `download-windows.ps1` fájlként is elérhető a kiadás mellékletei között. Nem szükséges módosítani a PowerShell végrehajtási házirendjét.
